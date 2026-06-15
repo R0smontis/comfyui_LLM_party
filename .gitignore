@@ -160,6 +160,7 @@ cython_debug/
 #.idea/
 
 config.ini
+llm_api_keys.json
 temp/
 WeChat_temp/
 audio/

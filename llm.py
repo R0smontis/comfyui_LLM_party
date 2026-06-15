@@ -1425,6 +1425,104 @@ class easy_LLM_api_loader:
         chat = Chat(model_name, openai.api_key, openai.base_url)
         return (chat,)
 
+
+# ======================================================================
+# 安全API加载器（secure_LLM_api_loader）
+# 从本地JSON文件按“配置名称”读取 model_name / base_url / api_key。
+# 工作流中只会保存“配置名称”这个字符串，api_key 永远不会写入工作流
+# JSON，也就不会通过图片元数据(PNG metadata)泄露。
+# ----------------------------------------------------------------------
+# Secure API loader: reads model_name/base_url/api_key from a local JSON
+# file by a profile name. Only the profile name is stored in the workflow,
+# so the api_key never leaks into the workflow JSON or the PNG metadata.
+# ======================================================================
+SECURE_API_KEYS_FILENAME = "llm_api_keys.json"
+
+
+def get_secure_keys_path(json_path=""):
+    """返回密钥JSON文件的绝对路径。json_path 为空时使用节点目录下的默认文件。"""
+    path = (json_path or "").strip()
+    if path:
+        return path
+    return os.path.join(current_dir_path, SECURE_API_KEYS_FILENAME)
+
+
+def load_secure_api_configs(json_path=""):
+    """读取密钥文件，返回 ({配置名称: {model_name, base_url, api_key}}, 实际使用的路径)。"""
+    path = get_secure_keys_path(json_path)
+    if not os.path.exists(path):
+        return {}, path
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[comfyui_llm_party] 读取密钥文件失败 / failed to read {path}: {e}")
+        return {}, path
+    if not isinstance(data, dict):
+        print(f"[comfyui_llm_party] 密钥文件应为JSON对象 / {path} must be a JSON object")
+        return {}, path
+    return data, path
+
+
+class secure_LLM_api_loader:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        configs, _ = load_secure_api_configs()
+        names = list(configs.keys()) or [""]
+        return {
+            "required": {
+                "config_name": (
+                    names,
+                    {"tooltip": "本地JSON文件中定义的配置名称。只有这个名称会被保存进工作流，api_key 不会。"},
+                ),
+            },
+            "optional": {
+                "json_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "tooltip": "可选：自定义密钥JSON文件的绝对路径。留空则使用节点目录下的 llm_api_keys.json。路径本身不是机密。",
+                    },
+                ),
+                "is_ollama": ("BOOLEAN", {"default": False, "tooltip": "本地 ollama，无需 api_key。"}),
+            },
+        }
+
+    RETURN_TYPES = ("CUSTOM",)
+    RETURN_NAMES = ("model",)
+    OUTPUT_TOOLTIPS = ("The loaded model.",)
+    DESCRIPTION = "从本地JSON文件按名称安全加载 model/base_url/api_key，避免 api_key 泄露到工作流和图片元数据中。"
+    FUNCTION = "chatbot"
+
+    CATEGORY = "大模型派对（llm_party）/模型加载器（model loader）"
+
+    def chatbot(self, config_name, json_path="", is_ollama=False):
+        if is_ollama:
+            return (Chat(config_name or "ollama", "ollama", "http://127.0.0.1:11434/v1/"),)
+
+        configs, used_path = load_secure_api_configs(json_path)
+        if not configs:
+            raise ValueError(
+                f"未找到任何配置，请先创建密钥文件: {used_path} "
+                f"(格式可参考 llm_api_keys.json.example)。"
+            )
+        if config_name not in configs:
+            raise ValueError(
+                f"配置名称 '{config_name}' 不在密钥文件 {used_path} 中。"
+                f"可选名称: {', '.join(configs.keys())}"
+            )
+        entry = configs.get(config_name) or {}
+        api_key = str(entry.get("api_key", "") or "")
+        base_url = str(entry.get("base_url", "") or "")
+        model_name = str(entry.get("model_name", "") or "") or config_name
+        if api_key == "":
+            raise ValueError(f"配置 '{config_name}' 缺少 api_key，请在 {used_path} 中填写。")
+        return (Chat(model_name, api_key, base_url),)
+
+
 class LLM:
     def __init__(self):
         current_time = datetime.datetime.now()
@@ -2961,6 +3059,7 @@ NODE_CLASS_MAPPINGS = {
     "LLM_local_loader": LLM_local_loader,
     "easy_LLM_local_loader": easy_LLM_local_loader,
     "easy_LLM_api_loader":easy_LLM_api_loader,
+    "secure_LLM_api_loader": secure_LLM_api_loader,
     "load_ebd":load_ebd,
     "load_file": load_file,
     "load_persona": load_persona,
@@ -3080,6 +3179,7 @@ if lang == "zh_CN":
         "LLM_local": "🖥️本地LLM通用链路",
         "LLM_api_loader": "☁️API LLM加载器",
         "easy_LLM_api_loader": "☁️简易API LLM加载器",
+        "secure_LLM_api_loader": "🔒安全API LLM加载器(本地JSON)",
         # "genai_api_loader":"Gemini API LLM加载器",
         "LLM_local_loader": "🖥️本地LLM加载器",
         "easy_LLM_local_loader": "🖥️简易本地LLM加载器",
@@ -3196,6 +3296,7 @@ else:
         "LLM_local": "🖥️Local LLM general link",
         "LLM_api_loader": "☁️API LLM Loader",
         "easy_LLM_api_loader": "☁️Easy API LLM Loader",
+        "secure_LLM_api_loader": "🔒Secure API LLM Loader (local JSON)",
         # "genai_api_loader":"Gemini API LLM Loader",
         "LLM_local_loader": "🖥️Local LLM Loader",
         "easy_LLM_local_loader": "🖥️Easy Local LLM Loader",
